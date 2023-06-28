@@ -1,4 +1,7 @@
 ﻿using System.Diagnostics;
+using System.Text;
+
+using Mati_ClickHouse.Extensions;
 
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,57 +13,182 @@ namespace Mati_ClickHouse.Controllers
     [Route("[controller]")]
     public class ClickHouseController : ControllerBase
     {
-        private readonly ILogger<WeatherForecastController> _logger;
+        private readonly ILogger<ClickHouseController> _logger;
 
-        public ClickHouseController(ILogger<WeatherForecastController> logger)
+        public ClickHouseController(ILogger<ClickHouseController> logger)
         {
             _logger = logger;
         }
 
-        [HttpGet(Name = "ClickHouseClient")]
-        public async Task<ActionResult<double>> Get(CancellationToken cancellationToken = default)
+        [HttpGet(Name = "ClickHouseClientSync")]
+        public ActionResult<string> Get()
         {
-            var sb = new ClickHouseConnectionStringBuilder
             {
-                Host = "127.0.0.1",
-                Port = 9000,
-                User = "username",
-                Password = "password",
-                //Database = "mati_database",
-            };
-            //using var conn = new ClickHouseConnection("Host=127.0.0.1; Port=8123;");
-            using var conn = new ClickHouseConnection(sb);
-            await conn.OpenAsync(cancellationToken);
+                var clickHouseConnectionStringBuilder = new ClickHouseConnectionStringBuilder
+                {
+                    Host = "127.0.0.1",
+                    Port = 9000,
+                    User = "username",
+                    Password = "password",
+                    Database = "SinjulMati",
+                };
 
-            using var createDatabaseCommand = conn.CreateCommand("CREATE DATABASE IF NOT EXISTS mati_database");
-            await createDatabaseCommand.ExecuteNonQueryAsync(cancellationToken);
+                using var connection = clickHouseConnectionStringBuilder.ConnectToDatase();
 
-            using var createTableCommand = conn.CreateCommand("CREATE TABLE IF NOT EXISTS mati_database.vehiclepoint(id Int32, timestamp DateTime, name String, longitude Float32) ENGINE = MergeTree() PRIMARY KEY (id, timestamp)");
-            await createTableCommand.ExecuteNonQueryAsync(cancellationToken);
+                var dataBaseName = "SinjulMati";
 
-            List<int> ids = Enumerable.Range(1, 13).ToList();
-            List<DateTime> timestamps = ids.Select(i => DateTime.Now).ToList();
-            List<string> names = ids.Select(i => $"Name #{i}").ToList();
-            List<float> longitudes = ids.Select(i => float.Parse(i.ToString())).ToList();
+                var tableName = "GoTooshee";
 
-            await using var writer = await conn.CreateColumnWriterAsync("INSERT INTO mati_database.vehiclepoint(id, timestamp, name, longitude) VALUES", cancellationToken);
-            await writer.WriteTableAsync(new object[] { ids, timestamps, names, longitudes }, ids.Count, cancellationToken);
+                var sb = new StringBuilder();
 
-            var sw = Stopwatch.StartNew();
+                {
+                    connection.ExecuteCustomNonQuery($"CREATE DATABASE IF NOT EXISTS {dataBaseName}");
 
-            var getdata =
-                await conn
-                    .CreateCommand("SELECT * FROM mati_database.vehiclepoint")
-                    .ExecuteScalarAsync(cancellationToken)
-            ;
+                    connection.ExecuteCustomNonQuery($"CREATE TABLE IF NOT EXISTS {tableName}(id Int32) ENGINE = MergeTree() PRIMARY KEY (id)");
+                }
 
-            sw.Stop();
+                {
+                    var sw = Stopwatch.StartNew();
 
-            var totalSeconds = sw.Elapsed.TotalMilliseconds / 1000.2;
+                    var rowCount = 10_000_000;
 
-            _logger.LogInformation("{totalSeconds}", totalSeconds);
+                    List<int> ids = Enumerable.Range(1, rowCount).ToList();
 
-            return totalSeconds;
+                    var objects = new object[] { ids };
+
+                    connection.InsertBulkData(objects, rowCount, $"INSERT INTO {tableName} VALUES");
+
+                    sw.Stop();
+
+                    var totalSeconds = sw.Elapsed.TotalMilliseconds / 1000.2;
+
+                    var message = $"InsertBulkData TotalSeconds: {totalSeconds}and TotalRecords: {rowCount}\t|";
+
+                    sb.Append(message);
+                }
+
+                {
+                    var sw = Stopwatch.StartNew();
+
+                    var list = connection.PersonToListFromReader($"SELECT * FROM {tableName}");
+
+                    sw.Stop();
+
+                    var totalSeconds = sw.Elapsed.TotalMilliseconds / 1000.2;
+
+                    var message = $"Fetch100mRecordFromReader TotalSeconds: {totalSeconds}and TotalRecords: {list.Count}\t|";
+
+                    sb.Append(message);
+                }
+
+                {
+                    var sw = Stopwatch.StartNew();
+
+                    var list = connection.PersonToListFromDapper($"SELECT * FROM {tableName}");
+
+                    sw.Stop();
+
+                    var totalSeconds = sw.Elapsed.TotalMilliseconds / 1000.2;
+
+                    var message = $"Fetch100mRecordFromDapper TotalSeconds: {totalSeconds}and TotalRecords: {list.Count}\t|";
+
+                    sb.Append(message);
+                }
+
+                connection.Close();
+
+                var textDataResult = sb.ToString();
+
+                _logger.LogInformation("{textDataResult}", textDataResult);
+
+                return textDataResult;
+            }
+        }
+
+
+        [HttpPost(Name = "ClickHouseClientASync")]
+        public async Task<ActionResult<string>> Post(CancellationToken cancellationToken = default)
+        {
+            {
+                var clickHouseConnectionStringBuilder = new ClickHouseConnectionStringBuilder
+                {
+                    Host = "127.0.0.1",
+                    Port = 9000,
+                    User = "username",
+                    Password = "password",
+                    Database = "SinjulMati",
+                };
+
+                using var connection = await clickHouseConnectionStringBuilder.ConnectToDataseAsync(cancellationToken);
+
+                var dataBaseName = "SinjulMati";
+
+                var tableName = "GoTooshee";
+
+                var sb = new StringBuilder();
+
+                {
+                    await connection.ExecuteCustomNonQueryAsync($"CREATE DATABASE IF NOT EXISTS {dataBaseName}", cancellationToken);
+
+                    await connection.ExecuteCustomNonQueryAsync($"CREATE TABLE IF NOT EXISTS {tableName}(id Int32) ENGINE = MergeTree() PRIMARY KEY (id)", cancellationToken);
+                }
+
+                {
+                    var sw = Stopwatch.StartNew();
+
+                    var rowCount = 10_000_000;
+
+                    List<int> ids = Enumerable.Range(1, rowCount).ToList();
+
+                    var objects = new object[] { ids };
+
+                    await connection.InsertBulkDataAsync(objects, rowCount, $"INSERT INTO {tableName} VALUES", cancellationToken);
+
+                    sw.Stop();
+
+                    var totalSeconds = sw.Elapsed.TotalMilliseconds / 1000.2;
+
+                    var message = $"InsertBulkData TotalSeconds: {totalSeconds}and TotalRecords: {rowCount}\t|";
+
+                    sb.Append(message);
+                }
+
+                {
+                    var sw = Stopwatch.StartNew();
+
+                    var list = await connection.PersonToListFromReaderAsync($"SELECT * FROM {tableName}", cancellationToken);
+
+                    sw.Stop();
+
+                    var totalSeconds = sw.Elapsed.TotalMilliseconds / 1000.2;
+
+                    var message = $"Fetch100mRecordFromReader TotalSeconds: {totalSeconds}and TotalRecords: {list.Count}\t|";
+
+                    sb.Append(message);
+                }
+
+                {
+                    var sw = Stopwatch.StartNew();
+
+                    var list = await connection.PersonToListFromDapperAsync($"SELECT * FROM {tableName}");
+
+                    sw.Stop();
+
+                    var totalSeconds = sw.Elapsed.TotalMilliseconds / 1000.2;
+
+                    var message = $"Fetch100mRecordFromDapper TotalSeconds: {totalSeconds}and TotalRecords: {list.Count}\t|";
+
+                    sb.Append(message);
+                }
+
+                connection.Close();
+
+                var textDataResult = sb.ToString();
+
+                _logger.LogInformation("{textDataResult}", textDataResult);
+
+                return textDataResult;
+            }
         }
     }
 }
